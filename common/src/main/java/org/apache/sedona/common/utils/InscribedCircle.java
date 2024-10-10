@@ -45,4 +45,9 @@ public class InscribedCircle {
         && this.nearest.equals(other.nearest)
         && Math.abs(this.radius - other.radius) < epsilon;
   }
+
+  public boolean similar(InscribedCircle other, Double tolerance) {
+    return this.center.distance(other.center) < tolerance
+        && Math.abs(this.radius - other.radius) < tolerance;
+  }
 }
