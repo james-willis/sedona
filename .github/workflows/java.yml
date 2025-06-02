@@ -64,7 +64,7 @@ jobs:
         include:
           - spark: 3.5.5
             scala: 2.13.16
-            jdk: '11'
+            jdk: '17'
             skipTests: ''
           - spark: 3.5.0
             scala: 2.12.15
