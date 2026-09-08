@@ -63,11 +63,24 @@ public class RasterBandEditors {
       GridSampleDimension[] sampleDimensions = raster.getSampleDimensions();
       sampleDimensions[bandIndex - 1] =
           RasterUtils.removeNoDataValue(sampleDimensions[bandIndex - 1]);
-      // The GC_NODATA sentinel is carried both by the coverage properties and by the
-      // rendered image, and GridCoverage2D.getProperty falls through to the image, so it
-      // has to be dropped from both or GeoTools operations keep treating the cleared
-      // value as no-data. Masking wraps the image lazily: no pixels are copied, so a
-      // streamed raster stays undecoded and a non-zero image origin is preserved.
+
+      // GC_NODATA is a single coverage-wide sentinel, but no-data is declared per band, so
+      // it can only be dropped once no band declares one. Jiffle (RS_MapAlgebra) reads the
+      // property rather than the sample dimensions: dropping it while another band still
+      // has that no-data value would silently turn that band's sentinel pixels into
+      // ordinary data.
+      for (int band = 1; band <= sampleDimensions.length; band++) {
+        if (band != bandIndex && RasterBandAccessors.getBandNoDataValue(raster, band) != null) {
+          return RasterUtils.clone(
+              raster.getRenderedImage(), null, sampleDimensions, raster, null, true);
+        }
+      }
+
+      // The sentinel is carried both by the coverage properties and by the rendered image,
+      // and GridCoverage2D.getProperty falls through to the image, so it has to be dropped
+      // from both or GeoTools operations keep treating the cleared value as no-data.
+      // Masking wraps the image lazily: no pixels are copied, so a streamed raster stays
+      // undecoded and a non-zero image origin is preserved.
       RenderedImage image =
           PropertyMaskedRenderedImage.mask(raster.getRenderedImage(), NoDataContainer.GC_NODATA);
       Map<?, ?> properties = raster.getProperties();

@@ -19,12 +19,15 @@
 package org.apache.sedona.common.utils;
 
 import java.awt.Image;
+import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.image.ColorModel;
 import java.awt.image.Raster;
 import java.awt.image.RenderedImage;
 import java.awt.image.SampleModel;
+import java.awt.image.TileObserver;
 import java.awt.image.WritableRaster;
+import java.awt.image.WritableRenderedImage;
 import java.util.Arrays;
 import java.util.Vector;
 
@@ -47,13 +50,73 @@ public class PropertyMaskedRenderedImage implements RenderedImage {
 
   /**
    * Wrap {@code source} so that {@code propertyName} reads back as {@link Image#UndefinedProperty}.
-   * Returns the source unchanged when it does not carry the property.
+   * Returns the source unchanged when it does not carry the property. A {@link
+   * WritableRenderedImage} source is wrapped by a writable subclass, so that masking a property
+   * does not make an editable coverage read-only.
    */
   public static RenderedImage mask(RenderedImage source, String propertyName) {
     if (source.getProperty(propertyName) == Image.UndefinedProperty) {
       return source;
     }
+    if (source instanceof WritableRenderedImage) {
+      return new Writable((WritableRenderedImage) source, propertyName);
+    }
     return new PropertyMaskedRenderedImage(source, propertyName);
+  }
+
+  /**
+   * Masking variant for writable sources. {@code GridCoverage2D.isDataEditable} and JAI's {@code
+   * PlanarImage.wrapRenderedImage} both key off {@link WritableRenderedImage}, so a plain {@link
+   * RenderedImage} wrapper would quietly drop the ability to acquire writable tiles.
+   */
+  private static final class Writable extends PropertyMaskedRenderedImage
+      implements WritableRenderedImage {
+    private final WritableRenderedImage writableSource;
+
+    private Writable(WritableRenderedImage source, String maskedProperty) {
+      super(source, maskedProperty);
+      this.writableSource = source;
+    }
+
+    @Override
+    public void addTileObserver(TileObserver to) {
+      writableSource.addTileObserver(to);
+    }
+
+    @Override
+    public void removeTileObserver(TileObserver to) {
+      writableSource.removeTileObserver(to);
+    }
+
+    @Override
+    public WritableRaster getWritableTile(int tileX, int tileY) {
+      return writableSource.getWritableTile(tileX, tileY);
+    }
+
+    @Override
+    public void releaseWritableTile(int tileX, int tileY) {
+      writableSource.releaseWritableTile(tileX, tileY);
+    }
+
+    @Override
+    public boolean isTileWritable(int tileX, int tileY) {
+      return writableSource.isTileWritable(tileX, tileY);
+    }
+
+    @Override
+    public Point[] getWritableTileIndices() {
+      return writableSource.getWritableTileIndices();
+    }
+
+    @Override
+    public boolean hasTileWriters() {
+      return writableSource.hasTileWriters();
+    }
+
+    @Override
+    public void setData(Raster r) {
+      writableSource.setData(r);
+    }
   }
 
   @Override

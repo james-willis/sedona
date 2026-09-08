@@ -24,6 +24,8 @@ import static org.junit.Assert.*;
 
 import it.geosolutions.jaiext.range.NoDataContainer;
 import java.awt.image.RenderedImage;
+import java.awt.image.WritableRaster;
+import java.awt.image.WritableRenderedImage;
 import java.io.IOException;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
@@ -32,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import javax.media.jai.PlanarImage;
 import javax.media.jai.operator.TranslateDescriptor;
 import org.apache.sedona.common.Constructors;
 import org.apache.sedona.common.FunctionsGeoTools;
@@ -109,6 +112,59 @@ public class RasterBandEditorsTest extends RasterTestBase {
     GridCoverage2D roundTripped = Serde.deserialize(Serde.serialize(grid));
     assertNull(RasterBandAccessors.getBandNoDataValue(roundTripped, 1));
     assertNull(CoverageUtilities.getNoDataProperty(roundTripped));
+  }
+
+  @Test
+  public void testSetBandNoDataValueWithNullKeepsOtherBandsNoData()
+      throws FactoryException, IOException {
+    // GH-3324: GC_NODATA is a single coverage-wide sentinel, so clearing one band must not
+    // drop it while another band still declares that value. Jiffle (RS_MapAlgebra) reads
+    // the property rather than the sample dimensions, so dropping it would silently turn
+    // band 1's zeros into ordinary data.
+    GridCoverage2D empty = RasterConstructors.makeEmptyRaster(2, 20, 20, 0, 0, 1, -1, 0, 0, 4326);
+    empty = RasterBandEditors.setBandNoDataValue(empty, 1, 0.0);
+    empty = RasterBandEditors.setBandNoDataValue(empty, 2, 0.0);
+    // Round-trip so the raster carries the image-level property real GeoTIFFs have.
+    GridCoverage2D raster = RasterConstructors.fromGeoTiff(RasterOutputs.asGeoTiff(empty));
+
+    double before =
+        MapAlgebra.mapAlgebra(raster, "d", "out = rast[0] + 1;")
+            .getRenderedImage()
+            .getData()
+            .getSampleDouble(0, 0, 0);
+    assertTrue("band 1 zeros start out as no-data", Double.isNaN(before));
+
+    GridCoverage2D cleared = RasterBandEditors.setBandNoDataValue(raster, 2, null);
+    assertEquals(0.0, RasterBandAccessors.getBandNoDataValue(cleared, 1), 0.0001d);
+    assertNull(RasterBandAccessors.getBandNoDataValue(cleared, 2));
+
+    double after =
+        MapAlgebra.mapAlgebra(cleared, "d", "out = rast[0] + 1;")
+            .getRenderedImage()
+            .getData()
+            .getSampleDouble(0, 0, 0);
+    assertTrue("clearing band 2 must not change band 1's no-data handling", Double.isNaN(after));
+  }
+
+  @Test
+  public void testSetBandNoDataValueWithNullKeepsWritableImageWritable() throws FactoryException {
+    // Masking the property must not narrow a writable image to a read-only one, which
+    // would flip isDataEditable() and break callers acquiring writable tiles.
+    GridCoverage2D raster = RasterConstructors.makeEmptyRaster(1, "d", 4, 3, 0, 0, 1);
+    raster = RasterBandEditors.setBandNoDataValue(raster, 1, -9999.0);
+    ((PlanarImage) raster.getRenderedImage())
+        .setProperty(NoDataContainer.GC_NODATA, new NoDataContainer(-9999.0));
+    assertTrue(raster.isDataEditable());
+
+    GridCoverage2D cleared = RasterBandEditors.setBandNoDataValue(raster, 1, null);
+    assertNull(RasterBandAccessors.getBandNoDataValue(cleared, 1));
+    assertTrue(cleared.isDataEditable());
+
+    WritableRenderedImage image = (WritableRenderedImage) cleared.getRenderedImage();
+    WritableRaster tile = image.getWritableTile(0, 0);
+    tile.setSample(0, 0, 0, 42.0);
+    image.releaseWritableTile(0, 0);
+    assertEquals(42.0, cleared.getRenderedImage().getData().getSampleDouble(0, 0, 0), 0.0001d);
   }
 
   @Test
